@@ -1,4 +1,3 @@
 __pycache__/
-projections/
-reports/
-mlb_bat.csv
+projection_system/projections/
+projection_system/reports/
