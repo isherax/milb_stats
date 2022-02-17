@@ -227,7 +227,6 @@ class milb_model:
             levels = self.level_groups[level_group]
             for level in levels:
                 if level not in projection_input.columns:
-                    print(level)
                     projection_input[level] = 0
                     hidden_cols.append(level)
             level_df = projection_input[projection_input[levels].sum(axis=1) > 0]
