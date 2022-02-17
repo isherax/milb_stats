@@ -6,7 +6,7 @@ from sklearn.linear_model import LogisticRegression
 class milb_model:
     def __init__(self, stat_type, features, years=None, levels=None, war_buckets=None):
         self.stat_type = stat_type
-        self.features = features
+        self.features = features.copy()
         self.models = {}
         self.bucket_means = {}
         self.regressor = pd.DataFrame()
@@ -27,7 +27,7 @@ class milb_model:
         if levels:
             self.level_groups = levels
         else:
-            self.level_groups = {'high': ['Level_AAA', 'Level_AA'], 'mid': ['Level_A+', 'Level_A'], 'low': ['Level_R-', 'Level_DSL']}
+            self.level_groups = {'high': ['Level_AAA', 'Level_AA'], 'mid': ['Level_A+', 'Level_A'], 'low': ['Level_A-', 'Level_R-', 'Level_DSL']}
             
         for key in self.level_groups.keys():
             self.flat_levels.extend(self.level_groups[key])
@@ -35,7 +35,6 @@ class milb_model:
         if war_buckets:
             self.war_buckets = war_buckets
         else:
-            # self.war_buckets = {'-1': None, '0': [None, 0.5], '1-5': [0.5, 4.5], '5-10': [4.5, 9.5], '10-15': [9.5, 14.5], '15+': [14.5, None]}
             self.war_buckets = {'-1': None, '0': [None, 0.5], '1': [0.5, 1.5], '2': [1.5, 2.5], '3': [2.5, 3.5], '4+': [3.5, None]}
             
             
@@ -88,6 +87,9 @@ class milb_model:
                 for position in self.positions:
                     year_sample = self.add_pos(year_sample, year, position)
                 
+                pos_sums = year_sample[self.positions].sum(axis=1)
+                year_sample[self.positions] = year_sample[self.positions].div(pos_sums, axis=0)
+                
             milb_sample = milb_sample.append(year_sample)
         
         mlb_sample = pd.read_csv('peak_mlb_{0}.csv'.format(self.stat_type), dtype={'playerid': str})
@@ -115,7 +117,9 @@ class milb_model:
         for level_group in self.level_groups.keys():
             levels = self.level_groups[level_group]
             level_sample = milb_sample[milb_sample[levels].sum(axis=1) > 0]
-            x = level_sample[self.features]
+            level_features = self.features.copy()
+            level_features.extend(levels)
+            x = level_sample[level_features]
             y = level_sample['WAR_bucket']
             
             model = LogisticRegression(solver='newton-cg').fit(x, y)
@@ -212,6 +216,7 @@ class milb_model:
         projection_input = projection_input[projection_input['Age'] < 30]
         projection_input.fillna(value=0, inplace=True)
         projection_output = pd.DataFrame()
+        hidden_cols = []
         
         if self.stat_type == 'pit':
             projection_input['O'] = projection_input['IP'].astype(int) * 3 + round(projection_input['IP'] % 1, 1) * 10
@@ -220,19 +225,32 @@ class milb_model:
         
         for level_group in self.level_groups.keys():
             levels = self.level_groups[level_group]
+            for level in levels:
+                if level not in projection_input.columns:
+                    print(level)
+                    projection_input[level] = 0
+                    hidden_cols.append(level)
             level_df = projection_input[projection_input[levels].sum(axis=1) > 0]
             
             if self.stat_type == 'bat':
                 for position in self.positions:
                     level_df = self.add_pos(level_df, year, position)
+                    
+                pos_sums = level_df[self.positions].sum(axis=1)
+                level_df[self.positions] = level_df[self.positions].div(pos_sums, axis=0)
+                level_df.fillna(value=0, inplace=True)
             
             if len(level_df) > 0:
-                x = level_df[self.features]                
+                level_features = self.features.copy()
+                level_features.extend(levels)
+                        
+                x = level_df[level_features]                
                 level_output = level_df.copy()
                 level_output[list(self.war_buckets.keys())] = self.models[level_group].predict_proba(x)
                 projection_output = projection_output.append(level_output)
         
         curr_output = self.weight_current(projection_output)
+        curr_output.drop(hidden_cols, axis=1, inplace=True)
         if weight_historic:
             final_output = self.weight_previous(year, curr_output)
             final_output.to_csv('projections/{0}_{1}_projections.csv'.format(year, self.stat_type), index=False)
